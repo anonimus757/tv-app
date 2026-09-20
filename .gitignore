@@ -32,3 +32,11 @@ google-services.json
 
 # Android Profiling
 *.hprof
+service-account.json
+set-admin.js
+node_modules/
+package.json
+package-lock.json
+.env
+*.bak
+*.bak*

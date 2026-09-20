@@ -1,0 +1,83 @@
+#!/bin/bash
+set -e
+
+if [ ! -f "./gradlew" ]; then
+    echo "❌ No estás en la raíz del proyecto"
+    exit 1
+fi
+
+DATA_DIR="app/src/main/java/com/anonimus757/tvapp/data"
+FILE_EXTRACTOR="$DATA_DIR/M3u8Extractor.kt"
+
+cp "$FILE_EXTRACTOR" "$FILE_EXTRACTOR.bak-extractor-fix"
+
+echo "📝 Aplicando fix para embeds de futbollibrefullhd.org..."
+
+python3 << 'PYEOF'
+import re
+file_path = "app/src/main/java/com/anonimus757/tvapp/data/M3u8Extractor.kt"
+with open(file_path) as f:
+    content = f.read()
+
+# 1) Añadir una lista de dominios que requieren WebView por usar JS
+if "private val DOMINIOS_REQUIEREN_WEBVIEW" not in content:
+    ancla = "private const val MAX_PROF = 5"
+    nuevo_bloque = '''
+    // Dominios que cargan el video con JavaScript y requieren WebView
+    private val DOMINIOS_REQUIEREN_WEBVIEW = listOf(
+        "tvf90.com",
+        "tvf90.com",
+        "streamxhd",
+        "liontv.es"
+    )
+'''
+    content = content.replace(ancla, ancla + nuevo_bloque)
+    print("✅ Lista de dominios que requieren WebView añadida.")
+
+# 2) Modificar la función extraer() para que detecte estos dominios y devuelva null (forzando el WebView)
+old_extraer_start = '''    suspend fun extraer(
+        urlEmbed: String,
+        referer: String,
+        onLog: (String) -> Unit
+    ): String? = withContext(Dispatchers.IO) {
+        val urlReal = decodificarR(urlEmbed) ?: urlEmbed
+        if (urlReal != urlEmbed) {
+            onLog("🔓 Param ?r decodificado")
+        }'''
+
+    new_extraer_start = '''    suspend fun extraer(
+        urlEmbed: String,
+        referer: String,
+        onLog: (String) -> Unit
+    ): String? = withContext(Dispatchers.IO) {
+        val urlReal = decodificarR(urlEmbed) ?: urlEmbed
+        if (urlReal != urlEmbed) {
+            onLog("🔓 Param ?r decodificado")
+        }
+
+        // Si el dominio requiere WebView, no intentamos extraer estáticamente.
+        if (DOMINIOS_REQUIEREN_WEBVIEW.any { urlReal.contains(it) }) {
+            onLog("🌐 Dominio requiere WebView → forzando fallback")
+            return@withContext null
+        }'''
+
+    if old_extraer_start in content:
+        content = content.replace(old_extraer_start, new_extraer_start)
+        print("✅ Función extraer() modificada para forzar WebView en dominios específicos.")
+    else:
+        print("⚠️  No se encontró el bloque de extraer() esperado.")
+
+with open(file_path, "w") as f:
+    f.write(content)
+PYEOF
+
+echo ""
+echo "🔎 Verificando:"
+grep -q "DOMINIOS_REQUIEREN_WEBVIEW" "$FILE_EXTRACTOR" && echo "  ✓ Lista de dominios añadida."
+grep -q "forzando fallback" "$FILE_EXTRACTOR" && echo "  ✓ Detección de dominios que requieren WebView."
+
+echo ""
+echo "✅✅✅ Fix del extractor aplicado."
+echo ""
+echo "🚀 Compilá:"
+echo "   ./gradlew assembleDebug --no-daemon --max-workers=1"

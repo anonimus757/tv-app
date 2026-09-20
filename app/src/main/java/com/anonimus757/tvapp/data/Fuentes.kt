@@ -1,0 +1,75 @@
+package com.anonimus757.tvapp.data
+
+val FUENTES = listOf(
+    Fuente(
+        id = "futbollibre",
+        nombre = "Futbollibre",
+        groupTitle = "EVENTOS 🗒️",
+        base = "https://futbollibrevip.pe",
+        agenda = "https://futbollibrevip.pe/agenda-data.php",
+        imgBase = "https://img.futbollibrehd.com.pe",
+        imgDefault = "https://img.futbollibrehd.com.pe/uploads/sin_imagen_d36205f0e8.png",
+        flagsBase = null,
+        tipo = "json"
+    ),
+    Fuente(
+        id = "pelotalibrehd",
+        nombre = "Pelota Libre HD",
+        groupTitle = "EVENTOS 2 🗒️",
+        base = "https://pelotalibrehd.cl",
+        agenda = "https://pelotalibrehd.cl/agenda-data.php",
+        imgBase = "https://img.futbollibrehd.com.pe",
+        imgDefault = "https://img.futbollibrehd.com.pe/uploads/sin_imagen_d36205f0e8.png",
+        flagsBase = null,
+        tipo = "json"
+    ),
+    Fuente(
+        id = "pelotalibretv2",
+        nombre = "Pelota Libre TV2",
+        groupTitle = "EVENTOS 3 🗒️",
+        base = "https://pelotalibretv2.online",
+        agenda = "https://pelotalibretv2.online/eventos.js",
+        imgBase = "",
+        imgDefault = "https://pelotalibretv2.online/img/favi.jpg",
+        flagsBase = "https://pelotalibretv2.online/flags/",
+        tipo = "js"
+    ),
+)
+
+val MAPA_LOGOS = mapOf(
+    "TUR" to "tr.webp", "ENG" to "en.webp", "ALE" to "de.webp", "FRA" to "fr.webp",
+    "HOL" to "nl.webp", "POR" to "pt.webp", "MEX" to "mx.png", "ES" to "es.png",
+    "IT" to "it.png", "BEL" to "be.webp", "COSTARICA" to "cr.webp", "ESC" to "sx.webp",
+    "BOL" to "bo.png", "USA" to "us.png", "FUT" to "international.webp",
+    "COL" to "co.webp", "ATP" to "atp.webp", "PARAG" to "py.webp", "AR" to "ar.webp",
+    "PE" to "pe.webp", "PY" to "py.webp", "RUGBY" to "rugby-union.webp",
+    "URU" to "uru.webp", "BRA" to "br.webp", "VEN" to "ven.webp", "ARA" to "ara.webp",
+    "CH" to "ch.webp", "CHA" to "chaa.png", "ECUA" to "ec.webp",
+    "MOTOGP" to "motogp.webp", "MOTO2" to "moto2.webp", "MOTO3" to "moto3.webp",
+    "INDYCAR" to "indycar.webp", "WTA" to "wta.webp", "GRE" to "gr.png",
+    "GOLF" to "golf.svg", "UCI" to "uci.png", "PADEL" to "padel.jpg",
+    "HN" to "hn.png", "GT" to "gt.png", "NHL" to "nhl.png", "NBA" to "nba.png",
+    "VNL" to "vnl.png", "WWE" to "wwe.png", "BOX" to "BOXEO.png",
+    "AFCCUP" to "afccup.png", "AFCCHA" to "afccha.png",
+    "KINGSLEAGUE" to "kingsleague.png", "EUROLEAGUEBASKET" to "euroleaguebasket.png",
+    "LMB" to "lmb.png", "HANDBALL" to "handball.png", "ENDESA" to "endesa.png",
+    "NBB" to "NBB.png", "UFC" to "UFC.png", "NFL" to "nfl.png",
+    "UEFA_NATIONS" to "nationsleague.png", "EURO_COPA" to "eurocopa.png",
+    "COPA_AMERICA" to "//futbol-libre-hd.com/flags/copa_america.png",
+    "AEW" to "aewusa.jpg", "AFR" to "afr.png", "FIFA" to "fifa.webp",
+    "COSQUIN" to "cosquin.png", "PREOLIMPICO" to "preolimpico.png",
+    "LIB" to "lib.png", "UYL" to "uyl.png", "LCC" to "concachampions.png",
+    "CONCACAF-F" to "concacaf-f.png", "SERIECARIBE" to "seriecaribe.png",
+    "CICLISMO" to "ciclismo.png", "CAF" to "cafa.png", "NCAA" to "ncaa.webp",
+    "UCL" to "conferecen.png", "UE" to "uelogo.png", "MFP" to "MFP.png",
+    "GOLDCUP" to "COPAOROM.png", "RECOPA-SUD" to "sud.png",
+    "FIBAAMERICA" to "fiba.png", "EUROBASKET" to "eurocopabaske.png",
+    "OLIMPICOS" to "olimpicos2.png", "ELIMINATORIAS_CONMEBOL" to "sudamerica.png",
+    "MLB" to "mlb.png", "NCAAMARCH" to "ncaamarchusa.png", "SUD" to "sud.png",
+    "BASKET" to "basket.png", "MUNDIALCLUBES" to "mundialclubes2025.png",
+    "F2" to "f2.png", "F3" to "f3.png", "F1" to "f1.png",
+    "LEAGUESCUP" to "leaguescup.png", "OSCARS" to "oscars.png",
+    "CONCACAFLIGAD" to "concachampions.png",
+    "EUROELIMINATORIAS" to "eliminatoriaseuro.png", "MMA" to "mma.png",
+    "WNBA" to "wnba1.webp", "UEFA_SUPERCOPA" to "uefasupercopa.png"
+)
