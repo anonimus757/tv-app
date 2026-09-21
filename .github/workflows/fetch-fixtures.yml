@@ -1,0 +1,30 @@
+name: Fetch Fixtures
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+    - cron: '*/10 14-23,0-3 * * *'
+  workflow_dispatch:
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install firebase-admin node-fetch@3
+
+      - name: Run fetch script
+        env:
+          API_SPORTS_KEY: ${{ secrets.API_SPORTS_KEY }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: node scripts/fetch-fixtures.js
