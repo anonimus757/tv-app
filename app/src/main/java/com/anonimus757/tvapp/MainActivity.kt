@@ -1,7 +1,6 @@
 package com.anonimus757.tvapp
 
 import android.Manifest
-import android.content.pm.ActivityInfo
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -13,36 +12,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.lifecycleScope
 import com.anonimus757.tvapp.data.DebugLog
-import com.anonimus757.tvapp.data.AjustesStore
 import com.anonimus757.tvapp.data.FirebaseManager
 import com.anonimus757.tvapp.data.RemoteConfigRepository
 import com.anonimus757.tvapp.data.VersionChecker
 import com.anonimus757.tvapp.notifications.NotificationHelper
 import com.anonimus757.tvapp.ui.*
-import com.anonimus757.tvapp.ui.util.DetectorDispositivo
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // ═══════════════════════════════════════════════════════
-        // APLICAR ORIENTACIÓN
-        // TV → siempre horizontal
-        // Celu/Tablet → según preferencia del usuario
-        // ═══════════════════════════════════════════════════════
-        try {
-            if (DetectorDispositivo.esTV(this)) {
-                requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-            } else {
-                val pref = AjustesStore.obtenerOrientacion(this)
-                requestedOrientation = when (pref) {
-                    "vertical" -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                    "horizontal" -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-                    else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                }
-            }
-        } catch (_: Exception) {}
 
         lifecycleScope.launch {
             FirebaseManager.init()

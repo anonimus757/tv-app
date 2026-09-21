@@ -12,6 +12,12 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.ui.draw.rotate
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -252,26 +258,17 @@ fun PlayerScreen(
     var reproduciendo by remember { mutableStateOf(false) }
     var calidadActual by remember { mutableStateOf(AjustesStore.obtenerCalidad(context)) }
     var toast by remember { mutableStateOf<String?>(null) }
-    var logsDiagnostico by remember { mutableStateOf(listOf<String>()) }
-    var mostrarLogDiag by remember { mutableStateOf(false) }
 
     val playerFocus = remember { FocusRequester() }
 
     val addLog: (String) -> Unit = { msg -> Log.d(TAG, msg) }
-
-    // 🆕 LOG DE DIAGNÓSTICO (visible en el reproductor)
-    val logDiag: (String) -> Unit = { msg ->
-        val t = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())
-        logsDiagnostico = (logsDiagnostico + "[$t] $msg").takeLast(40)
-    }
-
     val exoPlayer = remember {
         // Buffer optimizado: 8s mínimo, 45s máximo
         // - Arranca rápido (2s para primer frame)
         // - Aguanta micro-cortes (45s de buffer)
         // - Rebuffer 5s para recuperarse sin pausar
         val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(8000, 45000, 2000, 5000)
+            .setBufferDurationsMs(15000, 90000, 3000, 10000)
             .setPrioritizeTimeOverSizeThresholds(true)
             .setBackBuffer(0, false)
             .build()
@@ -299,7 +296,6 @@ fun PlayerScreen(
                 addListener(object : Player.Listener {
                     override fun onPlayerError(e: PlaybackException) {
                         val code = e.errorCodeName
-                        logDiag("❌ ERROR: $code")
                         exoError = "$code: ${e.message?.take(160)}"
                         addLog("❌ $code")
                         if (todosFallaron) return
@@ -400,7 +396,6 @@ fun PlayerScreen(
                             4 -> "ENDED"
                             else -> "?"
                         }
-                        logDiag("📺 Estado: $nombreEstado")
                         when (state) {
                             Player.STATE_READY -> {
                                 exoError = null
@@ -497,7 +492,6 @@ fun PlayerScreen(
     }
 
     LaunchedEffect(embedActual) {
-        logDiag("🔄 Canal: ${embedActual.nombre}")
         try { exoPlayer.stop(); exoPlayer.clearMediaItems() } catch (_: Exception) {}
         m3u8Url = null
         exoError = null
@@ -535,7 +529,6 @@ fun PlayerScreen(
                 embedActual.url, embedActual.referer, addLog
             )
             if (url != null) {
-                logDiag("✅ Extractor OK: ${url.take(100)}")
                 cookies = M3u8Extractor.cookieString()
                 m3u8Url = url
                 // Guardar en cache para próximas veces
@@ -574,8 +567,8 @@ fun PlayerScreen(
                     .setUserAgent(USER_AGENT)
                     .setDefaultRequestProperties(headers)
                     .setAllowCrossProtocolRedirects(true)
-                    .setConnectTimeoutMs(15000)
-                    .setReadTimeoutMs(15000)
+                    .setConnectTimeoutMs(25000)
+                    .setReadTimeoutMs(25000)
                 val esTS = nuevaUrl.substringBefore("?").endsWith(".ts", ignoreCase = true)
 
                 val src = if (esTS) {
@@ -600,7 +593,6 @@ fun PlayerScreen(
 
     LaunchedEffect(m3u8Url, reloadTrigger) {
         val url = m3u8Url ?: return@LaunchedEffect
-        logDiag("🔵 Cargando URL (trigger=$reloadTrigger)")
         try {
             status = "Cargando..."
             try { exoPlayer.stop(); exoPlayer.clearMediaItems() } catch (_: Exception) {}
@@ -785,7 +777,7 @@ fun PlayerScreen(
     LaunchedEffect(m3u8Url) {
         if (m3u8Url == null) return@LaunchedEffect
         while (true) {
-            delay(6 * 60 * 1000L) // 8 minutos
+            delay(5 * 60 * 1000L) // 5 minutos (antes de que expire el token)
             if (m3u8Url != null && !refrescando && !todosFallaron) {
                 addLog("🔄 Auto-refresh de token (background)")
                 try {
@@ -795,6 +787,8 @@ fun PlayerScreen(
                         // Actualizar el m3u8 SIN mostrar spinner ni cortar el video
                         m3u8Url = fresh
                         addLog("✅ Token renovado silenciosamente")
+                    } else if (fresh == null) {
+                        addLog("⚠️ Token no renovado, se reintentará en 5 min")
                     }
                 } catch (_: Exception) {
                     addLog("⚠️ Auto-refresh falló, se reintentará en 8 min")
@@ -803,10 +797,14 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(mostrarControles, panelAbierto, refrescando, zona, avisoCambio, toast) {
-        if (mostrarControles && !panelAbierto && !refrescando && zona == ZonaUI.VIDEO && avisoCambio == null && toast == null) {
-            delay(4500)
+    LaunchedEffect(mostrarControles, panelAbierto, refrescando, avisoCambio, toast, zona, idxBottom) {
+        // Auto-hide de los controles. Se oculta SIEMPRE después de 5s
+        // si no hay panel abierto, no está refrescando, no hay aviso/toast.
+        // La clave: NO chequea `zona` — funciona sin importar dónde esté el foco.
+        if (mostrarControles && !panelAbierto && !refrescando && avisoCambio == null && toast == null) {
+            delay(5000)
             mostrarControles = false
+            zona = ZonaUI.VIDEO
         }
     }
 
@@ -948,6 +946,12 @@ fun PlayerScreen(
             .onKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
                 if (panelAbierto) return@onKeyEvent false
+                // Cualquier tecla resetea el timer de auto-hide
+                if (mostrarControles) {
+                    // ya está visible, el LaunchedEffect lo va a resetear
+                } else {
+                    mostrarControles = true
+                }
 
                 when (event.key) {
                     Key.DirectionLeft -> {
@@ -1418,79 +1422,6 @@ fun PlayerScreen(
             }
         }
 
-        // ═══════════════════════════════════════════════════════
-        // 🐛 LOG DE DIAGNÓSTICO (tocar para ver/ocultar)
-        // ═══════════════════════════════════════════════════════
-        Box(
-            Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 110.dp, end = 16.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(Color(0xCC000000))
-                .border(1.dp, Color(0x66FF6B6B), RoundedCornerShape(8.dp))
-                .clickable { mostrarLogDiag = !mostrarLogDiag }
-                .padding(horizontal = 10.dp, vertical = 6.dp)
-        ) {
-            Text(
-                "🐛 DIAG",
-                color = Color(0xFFFF6B6B),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold
-            )
-        }
-
-        if (mostrarLogDiag) {
-            Box(
-                Modifier
-                    .align(Alignment.Center)
-                    .fillMaxSize(0.85f)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xEE000000))
-                    .border(2.dp, Color(0xFFFF6B6B), RoundedCornerShape(12.dp))
-                    .padding(14.dp)
-            ) {
-                androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxSize()) {
-                    item {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "🐛 DIAGNÓSTICO (${logsDiagnostico.size})",
-                                color = Color(0xFFFF6B6B),
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Black
-                            )
-                            Spacer(Modifier.weight(1f))
-                            Text(
-                                "tocar 🐛 para cerrar",
-                                color = Color(0xFF94A3B8),
-                                fontSize = 10.sp
-                            )
-                        }
-                        Spacer(Modifier.height(10.dp))
-                    }
-                    items(logsDiagnostico.size) { i ->
-                        val l = logsDiagnostico[i]
-                        val color = when {
-                            l.contains("❌") -> Color(0xFFFF6B6B)
-                            l.contains("READY") -> Color(0xFF4ADE80)
-                            l.contains("BUFFERING") -> Color(0xFFFACC15)
-                            l.contains("IDLE") || l.contains("ENDED") -> Color(0xFF94A3B8)
-                            l.contains("🔵") -> Color(0xFF38BDF8)
-                            l.contains("🔄") -> Color(0xFFA78BFA)
-                            else -> Color(0xFFCBD5E1)
-                        }
-                        Text(
-                            l,
-                            color = color,
-                            fontSize = 10.sp,
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                            lineHeight = 14.sp,
-                            modifier = Modifier.padding(vertical = 1.dp)
-                        )
-                    }
-                }
-            }
-        }
-
         if (usarWebView && m3u8Url == null) {
             AndroidView(
                 factory = { ctx ->
@@ -1556,7 +1487,7 @@ fun PlayerScreen(
 }
 
 // ═══════════════════════════════════════════════════════════
-// TOP OVERLAY
+// TOP OVERLAY — Premium
 // ═══════════════════════════════════════════════════════════
 
 @Composable
@@ -1571,58 +1502,114 @@ private fun TopOverlay(
     refrescando: Boolean,
     onRefrescar: () -> Unit
 ) {
+    // Pulse simple sin animaciones (evita imports problemáticos)
+    var pulseAlpha by remember { mutableFloatStateOf(1f) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(600)
+            pulseAlpha = if (pulseAlpha > 0.7f) 0.4f else 1f
+        }
+    }
+
     Box(
         Modifier
             .fillMaxWidth()
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
-                        Color.Black.copy(alpha = 0.92f),
-                        Color.Black.copy(alpha = 0.55f),
+                        Color.Black.copy(alpha = 0.88f),
+                        Color.Black.copy(alpha = 0.6f),
+                        Color.Black.copy(alpha = 0.2f),
                         Color.Transparent
                     )
                 )
             )
-            .padding(horizontal = 32.dp, vertical = 22.dp)
+            .padding(horizontal = 28.dp, vertical = 22.dp)
     ) {
         Row(verticalAlignment = Alignment.Top) {
             Column(Modifier.weight(1f)) {
+                // Live indicator row
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier.alpha(pulseAlpha).size(8.dp).clip(CircleShape)
+                            .background(Color(0xFFFF3B30))
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "EN VIVO",
+                        color = Color(0xFFFF6B5D),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 2.sp
+                    )
+                    Spacer(Modifier.width(16.dp))
+                    Text(
+                        formatoTiempo(segundosActivo),
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        letterSpacing = 1.sp
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
                 Text(
                     evento.descripcion,
                     color = Color.White,
-                    fontSize = 26.sp,
+                    fontSize = 28.sp,
                     fontWeight = FontWeight.Black,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    lineHeight = 30.sp
+                    lineHeight = 32.sp,
+                    letterSpacing = (-0.4).sp
                 )
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(embedActual.nombre, color = Color(0xFFFFD700), fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Box(
+                        Modifier.size(width = 4.dp, height = 14.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(Color(0xFFFFD700))
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        embedActual.nombre,
+                        color = Color(0xFFFFD700),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     Text("  ·  ", color = Color(0xFF64748B), fontSize = 14.sp)
-                    Text(evento.hora, color = Color(0xFFCBD5E1), fontSize = 14.sp)
-                    Text("  ·  ", color = Color(0xFF64748B), fontSize = 14.sp)
-                    Text(evento.fuente, color = Color(0xFFCBD5E1), fontSize = 14.sp)
+                    Text(evento.hora, color = Color(0xFFCBD5E1), fontSize = 13.sp)
                 }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(14.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Pill(icono = AppIcons.reloj, texto = formatoTiempo(segundosActivo), colorTexto = Color(0xFFFFD700))
                     PillSalud(salud)
-                    Pill(icono = AppIcons.calidad, texto = formatoResolucion(salud.alto))
-                    Pill(icono = AppIcons.wifi, texto = formatoBitrate(salud.bitrateBps))
+                    PillMinimal(texto = formatoResolucion(salud.alto))
+                    PillMinimal(texto = formatoBitrate(salud.bitrateBps))
                 }
                 if (reintentos > 0) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "Reintentos: $reintentos/$maxReintentos",
-                        color = Color(0xFFFACC15),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    Spacer(Modifier.height(10.dp))
+                    Row(
+                        Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0x33FACC15))
+                            .border(1.dp, Color(0x88FACC15), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("⟳", color = Color(0xFFFACC15), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "Reintento $reintentos/$maxReintentos",
+                            color = Color(0xFFFACC15),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
             }
 
-            Spacer(Modifier.width(24.dp))
+            Spacer(Modifier.width(20.dp))
 
             BotonRefrescar(
                 seleccionado = seleccionado,
@@ -1634,23 +1621,21 @@ private fun TopOverlay(
 }
 
 @Composable
-private fun Pill(
-    icono: ImageVector,
-    texto: String,
-    colorTexto: Color = Color.White,
-    colorFondo: Color = Color(0x40000000)
-) {
-    Row(
+private fun PillMinimal(texto: String) {
+    Box(
         Modifier
             .clip(RoundedCornerShape(20.dp))
-            .background(colorFondo)
-            .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(20.dp))
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .background(Color.White.copy(alpha = 0.07f))
+            .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(20.dp))
+            .padding(horizontal = 12.dp, vertical = 6.dp)
     ) {
-        Icon(imageVector = icono, contentDescription = null, tint = colorTexto, modifier = Modifier.size(14.dp))
-        Spacer(Modifier.width(6.dp))
-        Text(texto, color = colorTexto, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            texto,
+            color = Color.White.copy(alpha = 0.9f),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.3.sp
+        )
     }
 }
 
@@ -1660,22 +1645,35 @@ private fun PillSalud(salud: SignalHealthMonitor.Salud) {
     Row(
         Modifier
             .clip(RoundedCornerShape(20.dp))
-            .background(color.copy(alpha = 0.15f))
-            .border(1.dp, color.copy(alpha = 0.5f), RoundedCornerShape(20.dp))
+            .background(color.copy(alpha = 0.12f))
+            .border(1.dp, color.copy(alpha = 0.45f), RoundedCornerShape(20.dp))
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(imageVector = AppIcons.senal, contentDescription = null, tint = color, modifier = Modifier.size(14.dp))
-        Spacer(Modifier.width(6.dp))
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.Bottom
+        ) {
+            val bloques = 4
+            val activos = (salud.porcentaje * bloques / 100).coerceIn(0, bloques)
+            for (i in 0 until bloques) {
+                Box(
+                    Modifier
+                        .width(3.dp)
+                        .height((4 + i * 3).dp)
+                        .clip(RoundedCornerShape(1.dp))
+                        .background(if (i < activos) color else color.copy(alpha = 0.25f))
+                )
+            }
+        }
+        Spacer(Modifier.width(8.dp))
         Text(
-            barraSalud(salud.porcentaje, bloques = 5),
+            "${salud.porcentaje}%",
             color = color,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.sp
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Black,
+            letterSpacing = 0.5.sp
         )
-        Spacer(Modifier.width(6.dp))
-        Text("${salud.porcentaje}%", color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -1685,50 +1683,66 @@ private fun BotonRefrescar(
     refrescando: Boolean,
     onClick: () -> Unit
 ) {
-    val scale by animateFloatAsState(if (seleccionado) 1.05f else 1f, tween(180), label = "rScale")
+    var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        if (seleccionado || focused) 1.06f else 1f,
+        tween(180), label = "rScale"
+    )
 
     Row(
         Modifier
             .scale(scale)
+            .onFocusChanged { focused = it.isFocused }
             .clickable(enabled = !refrescando) { onClick() }
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(14.dp))
             .background(
-                when {
-                    refrescando -> Color(0x33FFFFFF)
-                    seleccionado -> Color(0xFFFFD700)
-                    else -> Color(0x44000000)
-                }
+                Brush.horizontalGradient(
+                    when {
+                        seleccionado -> listOf(Color(0xFFFFD700), Color(0xFFD4AF37))
+                        focused -> listOf(Color.White.copy(alpha = 0.15f), Color.White.copy(alpha = 0.08f))
+                        else -> listOf(Color.Black.copy(alpha = 0.5f), Color.Black.copy(alpha = 0.35f))
+                    }
+                )
             )
             .border(
-                width = if (seleccionado) 2.dp else 1.dp,
-                color = if (seleccionado) Color(0xFFFFD700) else Color(0x66D4AF37),
-                shape = RoundedCornerShape(12.dp)
+                width = if (seleccionado || focused) 1.5.dp else 1.dp,
+                color = when {
+                    seleccionado -> Color(0xFFFFD700)
+                    focused -> Color.White.copy(alpha = 0.5f)
+                    else -> Color.White.copy(alpha = 0.2f)
+                },
+                shape = RoundedCornerShape(14.dp)
             )
             .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (refrescando) {
-            CircularProgressIndicator(color = Color(0xFFD4AF37), strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+            CircularProgressIndicator(
+                color = if (seleccionado) Color.Black else Color(0xFFFFD700),
+                strokeWidth = 2.dp,
+                modifier = Modifier.size(18.dp)
+            )
         } else {
             Icon(
                 imageVector = AppIcons.refrescar,
                 contentDescription = "Refrescar",
-                tint = if (seleccionado) Color.Black else Color(0xFFFFD700),
+                tint = if (seleccionado) Color.Black else Color.White,
                 modifier = Modifier.size(18.dp)
             )
         }
         Spacer(Modifier.width(8.dp))
         Text(
-            if (refrescando) "Refrescando..." else "Refrescar señal",
-            color = if (seleccionado) Color.Black else Color(0xFFFFD700),
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold
+            if (refrescando) "Refrescando" else "Refrescar",
+            color = if (seleccionado) Color.Black else Color.White,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.5.sp
         )
     }
 }
 
 // ═══════════════════════════════════════════════════════════
-// BOTTOM CONTROLS
+// BOTTOM CONTROLS — Premium
 // ═══════════════════════════════════════════════════════════
 
 @Composable
@@ -1752,15 +1766,21 @@ private fun BottomControls(
                 Brush.verticalGradient(
                     colors = listOf(
                         Color.Transparent,
-                        Color.Black.copy(alpha = 0.75f),
-                        Color.Black.copy(alpha = 0.92f)
+                        Color.Black.copy(alpha = 0.35f),
+                        Color.Black.copy(alpha = 0.7f),
+                        Color.Black.copy(alpha = 0.9f)
                     )
                 )
             )
-            .padding(horizontal = 32.dp, vertical = 24.dp)
+            .padding(horizontal = 32.dp, vertical = 22.dp)
     ) {
         Row(
-            Modifier.fillMaxWidth(),
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(24.dp))
+                .background(Color.White.copy(alpha = 0.04f))
+                .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(24.dp))
+                .padding(horizontal = 10.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -1771,31 +1791,31 @@ private fun BottomControls(
                 grande = true,
                 onClick = onTogglePlay
             )
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(6.dp))
             BarButton(
                 icono = AppIcons.volumenBajo,
                 label = null,
                 seleccionado = seleccionado && idxBottom == 1,
                 onClick = onBajarVol
             )
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(4.dp))
             BarButton(
                 icono = AppIcons.volumen,
                 label = "${(volumen * 100).toInt()}%",
                 seleccionado = seleccionado && idxBottom == 2,
                 onClick = onSubirVol
             )
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(6.dp))
             BarButton(
                 icono = AppIcons.calidad,
                 label = calidad.uppercase(),
                 seleccionado = seleccionado && idxBottom == 3,
                 onClick = onCiclarCalidad
             )
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(6.dp))
             BarButton(
                 icono = AppIcons.canales,
-                label = "$canalesCount canales",
+                label = "$canalesCount",
                 seleccionado = seleccionado && idxBottom == 4,
                 onClick = onAbrirPanel
             )
@@ -1811,50 +1831,49 @@ private fun BarButton(
     grande: Boolean = false,
     onClick: () -> Unit
 ) {
-    val scale by animateFloatAsState(if (seleccionado) 1.08f else 1f, tween(150), label = "bScale")
-    val bg by animateColorAsState(
-        if (seleccionado) Color(0xFFFFD700) else Color(0x55000000),
-        tween(150), label = "bBg"
+    val scale by animateFloatAsState(
+        if (seleccionado) 1.08f else 1f,
+        tween(150, easing = FastOutSlowInEasing), label = "bScale"
     )
-    val border by animateColorAsState(
-        if (seleccionado) Color(0xFFFFD700) else Color(0x55FFFFFF),
-        tween(150), label = "bBd"
+    val bg by animateColorAsState(
+        if (seleccionado) Color(0xFFFFD700) else Color.Transparent,
+        tween(150), label = "bBg"
     )
 
     Column(
         Modifier
             .scale(scale)
-            .height(if (grande) 64.dp else 54.dp)
-            .widthIn(min = if (grande) 64.dp else 54.dp)
+            .height(if (grande) 60.dp else 50.dp)
+            .widthIn(min = if (grande) 60.dp else 50.dp)
             .clickable { onClick() }
             .clip(RoundedCornerShape(14.dp))
             .background(bg)
-            .border(if (seleccionado) 2.dp else 1.dp, border, RoundedCornerShape(14.dp))
-            .padding(horizontal = if (grande) 0.dp else 16.dp),
+            .padding(horizontal = if (grande) 0.dp else 14.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         Icon(
             imageVector = icono,
             contentDescription = label,
-            tint = if (seleccionado) Color.Black else Color.White,
-            modifier = Modifier.size(if (grande) 28.dp else 22.dp)
+            tint = if (seleccionado) Color.Black else Color.White.copy(alpha = 0.95f),
+            modifier = Modifier.size(if (grande) 26.dp else 22.dp)
         )
         if (label != null) {
             Spacer(Modifier.height(2.dp))
             Text(
                 label,
-                color = if (seleccionado) Color.Black else Color.White,
+                color = if (seleccionado) Color.Black else Color.White.copy(alpha = 0.85f),
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
-                maxLines = 1
+                maxLines = 1,
+                letterSpacing = 0.3.sp
             )
         }
     }
 }
 
 // ═══════════════════════════════════════════════════════════
-// ESTADO (LOADING / ERROR)
+// ESTADO (LOADING / ERROR) — Premium
 // ═══════════════════════════════════════════════════════════
 
 @Composable
@@ -1868,37 +1887,92 @@ private fun EstadoOverlay(
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             Modifier
-                .clip(RoundedCornerShape(20.dp))
-                .background(Color(0xCC000000))
-                .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(20.dp))
-                .padding(horizontal = 36.dp, vertical = 28.dp),
+                .clip(RoundedCornerShape(24.dp))
+                .background(
+                    Brush.radialGradient(
+                        listOf(Color(0xF0050508), Color(0xEE000000))
+                    )
+                )
+                .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(24.dp))
+                .padding(horizontal = 44.dp, vertical = 34.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             if (error == null) {
-                CircularProgressIndicator(color = Color(0xFF38BDF8), strokeWidth = 3.dp, modifier = Modifier.size(46.dp))
-                Spacer(Modifier.height(18.dp))
-                Text(status, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Box(
+                    Modifier.size(60.dp).clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.05f))
+                        .border(1.dp, Color(0xFFFFD700).copy(alpha = 0.3f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        color = Color(0xFFFFD700),
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+                Spacer(Modifier.height(20.dp))
+                Text(
+                    status,
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.3.sp
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Buscando la mejor señal...",
+                    color = Color.White.copy(alpha = 0.4f),
+                    fontSize = 12.sp
+                )
             } else {
                 if (!todosFallaron) {
-                    CircularProgressIndicator(color = Color(0xFFFACC15), strokeWidth = 3.dp, modifier = Modifier.size(46.dp))
-                    Spacer(Modifier.height(18.dp))
-                    Text(
-                        "Recuperando... ($reintentos/$maxReintentos)",
-                        color = Color(0xFFFACC15), fontSize = 16.sp, fontWeight = FontWeight.SemiBold
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(error, color = Color(0xFF94A3B8), fontSize = 11.sp, maxLines = 3)
-                } else {
-                    Icon(
-                        imageVector = AppIcons.advertencia,
-                        contentDescription = null,
-                        tint = Color(0xFFEF4444),
+                    CircularProgressIndicator(
+                        color = Color(0xFFFACC15),
+                        strokeWidth = 2.5.dp,
                         modifier = Modifier.size(48.dp)
                     )
-                    Spacer(Modifier.height(12.dp))
-                    Text(error, color = Color(0xFFEF4444), fontSize = 15.sp, maxLines = 4, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(10.dp))
-                    Text("Desliza ← panel · Atrás para volver", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                    Spacer(Modifier.height(20.dp))
+                    Text(
+                        "Recuperando...",
+                        color = Color(0xFFFACC15),
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Intento $reintentos de $maxReintentos",
+                        color = Color.White.copy(alpha = 0.5f),
+                        fontSize = 12.sp
+                    )
+                } else {
+                    Box(
+                        Modifier.size(64.dp).clip(CircleShape)
+                            .background(Color(0xFFEF4444).copy(alpha = 0.15f))
+                            .border(1.5.dp, Color(0xFFEF4444).copy(alpha = 0.6f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = AppIcons.advertencia,
+                            contentDescription = null,
+                            tint = Color(0xFFEF4444),
+                            modifier = Modifier.size(30.dp)
+                        )
+                    }
+                    Spacer(Modifier.height(18.dp))
+                    Text(
+                        "Sin señal",
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 0.5.sp
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Probá otro canal o volvé más tarde",
+                        color = Color.White.copy(alpha = 0.5f),
+                        fontSize = 13.sp
+                    )
                 }
             }
         }
@@ -1906,7 +1980,7 @@ private fun EstadoOverlay(
 }
 
 // ═══════════════════════════════════════════════════════════
-// PANEL LATERAL
+// PANEL LATERAL — Premium
 // ═══════════════════════════════════════════════════════════
 
 @Composable
@@ -1924,111 +1998,142 @@ private fun PanelLateral(
         try { primerItemFocus.requestFocus() } catch (_: Exception) {}
     }
 
-    Column(
+    Box(
         Modifier
-            .width(440.dp)
+            .width(460.dp)
             .fillMaxHeight()
             .background(
                 Brush.horizontalGradient(
                     colors = listOf(
-                        Color(0xF0000000),
-                        Color(0xE0000000),
-                        Color(0xB0000000)
+                        Color(0xFA0A0A0F),
+                        Color(0xF00A0A0F),
+                        Color(0xC0000000),
+                        Color(0x90000000)
                     )
                 )
             )
-            .padding(horizontal = 24.dp, vertical = 32.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(6.dp).clip(CircleShape).background(Color(0xFFFFD700))
-            )
-            Spacer(Modifier.width(10.dp))
-            Text(
-                "CANALES DISPONIBLES",
-                color = Color(0xFFFFD700),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Black,
-                letterSpacing = 2.sp
-            )
-        }
-        Spacer(Modifier.height(10.dp))
-        Text(
-            evento.descripcion,
-            color = Color.White,
-            fontSize = 20.sp,
-            fontWeight = FontWeight.Bold,
-            maxLines = 2,
-            lineHeight = 24.sp
-        )
-        Spacer(Modifier.height(4.dp))
-        Text("${evento.hora} · ${evento.fuente}", color = Color(0xFF94A3B8), fontSize = 13.sp)
-
-        Spacer(Modifier.height(24.dp))
-
-        val otros = todosEventos.filter {
-            it.descripcion != evento.descripcion || it.fuente != evento.fuente
-        }
-
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            item(key = "canales_header") {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = AppIcons.canales,
-                        contentDescription = null,
-                        tint = Color(0xFF38BDF8),
-                        modifier = Modifier.size(16.dp)
+        // Línea dorada vertical a la derecha
+        Box(
+            Modifier
+                .align(Alignment.CenterEnd)
+                .width(1.dp)
+                .fillMaxHeight()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            Color.Transparent,
+                            Color(0xFFFFD700).copy(alpha = 0.3f),
+                            Color(0xFFFFD700).copy(alpha = 0.6f),
+                            Color(0xFFFFD700).copy(alpha = 0.3f),
+                            Color.Transparent
+                        )
                     )
-                    Spacer(Modifier.width(6.dp))
+                )
+        )
+
+        Column(
+            Modifier
+                .fillMaxHeight()
+                .padding(horizontal = 26.dp, vertical = 30.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(6.dp).clip(CircleShape).background(Color(0xFFFFD700)))
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    "CANALES",
+                    color = Color(0xFFFFD700),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 3.sp
+                )
+                Spacer(Modifier.weight(1f))
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color.White.copy(alpha = 0.06f))
+                        .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(20.dp))
+                        .padding(horizontal = 10.dp, vertical = 3.dp)
+                ) {
                     Text(
-                        "Este evento (${evento.embeds.size})",
-                        color = Color(0xFF38BDF8),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp
+                        "${evento.embeds.size}",
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
-            itemsIndexed(evento.embeds, key = { idx, it -> "emb_${idx}_${it.url}" }) { idx, emb ->
-                val isFirst = idx == 0
-                PanelItem(
-                    modifier = if (isFirst) Modifier.focusRequester(primerItemFocus) else Modifier,
-                    titulo = emb.nombre,
-                    subtitulo = if (emb.url == embedActual.url) "Reproduciendo ahora" else null,
-                    seleccionado = emb.url == embedActual.url,
-                    miniaturaUrl = evento.imagen,
-                    onClick = { onCanalClick(emb) }
-                )
+            Spacer(Modifier.height(14.dp))
+            Text(
+                evento.descripcion,
+                color = Color.White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                lineHeight = 24.sp,
+                letterSpacing = (-0.3).sp
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "${evento.hora}  ·  ${evento.fuente}",
+                color = Color.White.copy(alpha = 0.5f),
+                fontSize = 12.sp
+            )
+
+            Spacer(Modifier.height(22.dp))
+
+            val otros = todosEventos.filter {
+                it.descripcion != evento.descripcion || it.fuente != evento.fuente
             }
 
-            if (otros.isNotEmpty()) {
-                item(key = "otros_header") {
-                    Spacer(Modifier.height(24.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = AppIcons.calendario,
-                            contentDescription = null,
-                            tint = Color(0xFF38BDF8),
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            "Otros eventos",
-                            color = Color(0xFF38BDF8),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.sp
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                contentPadding = PaddingValues(bottom = 20.dp)
+            ) {
+                itemsIndexed(evento.embeds, key = { idx, it -> "emb_${idx}_${it.url}" }) { idx, emb ->
+                    val isFirst = idx == 0
+                    PanelItem(
+                        modifier = if (isFirst) Modifier.focusRequester(primerItemFocus) else Modifier,
+                        titulo = emb.nombre,
+                        subtitulo = if (emb.url == embedActual.url) "Reproduciendo ahora" else null,
+                        seleccionado = emb.url == embedActual.url,
+                        miniaturaUrl = evento.imagen,
+                        logoCanal = emb.logo,
+                        onClick = { onCanalClick(emb) }
+                    )
+                }
+
+                if (otros.isNotEmpty()) {
+                    item(key = "otros_header") {
+                        Spacer(Modifier.height(28.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                Modifier.size(4.dp).clip(CircleShape)
+                                    .background(Color.White.copy(alpha = 0.3f))
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                "OTROS EVENTOS",
+                                color = Color.White.copy(alpha = 0.5f),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = 2.sp
+                            )
+                        }
+                        Spacer(Modifier.height(10.dp))
+                    }
+                    itemsIndexed(
+                        otros.take(30),
+                        key = { idx, it -> "ev_${idx}_${it.descripcion}_${it.fuente}_${it.hora}" }
+                    ) { _, ev ->
+                        PanelItem(
+                            titulo = ev.descripcion,
+                            subtitulo = "${ev.hora}  ·  ${ev.fuente}",
+                            seleccionado = false,
+                            miniaturaUrl = ev.imagen,
+                            onClick = { onEventoClick(ev) }
                         )
                     }
-                }
-                itemsIndexed(otros.take(30), key = { idx, it -> "ev_${idx}_${it.descripcion}_${it.fuente}_${it.hora}" }) { _, ev ->
-                    PanelItem(
-                        titulo = ev.descripcion,
-                        subtitulo = "${ev.hora} · ${ev.fuente}",
-                        seleccionado = false,
-                        miniaturaUrl = ev.imagen,
-                        onClick = { onEventoClick(ev) }
-                    )
                 }
             }
         }
@@ -2042,74 +2147,99 @@ private fun PanelItem(
     subtitulo: String?,
     seleccionado: Boolean,
     onClick: () -> Unit,
-    miniaturaUrl: String? = null  // 🆕 FASE 3b: URL de la miniatura
+    miniaturaUrl: String? = null,
+    logoCanal: String = ""
 ) {
     var focused by remember { mutableStateOf(false) }
+
+    val scale by animateFloatAsState(if (focused) 1.02f else 1f, tween(150), label = "piScale")
     val bg by animateColorAsState(
         when {
-            focused -> Color(0x55D4AF37)
-            seleccionado -> Color(0x331E3A8A)
-            else -> Color(0x22FFFFFF)
-        },
-        tween(150), label = "piBg"
+            focused -> Color(0x33FFD700)
+            seleccionado -> Color(0x22FFD700)
+            else -> Color.White.copy(alpha = 0.03f)
+        }, tween(150), label = "piBg"
     )
     val border by animateColorAsState(
         when {
             focused -> Color(0xFFFFD700)
-            seleccionado -> Color(0x884ADE80)
-            else -> Color.Transparent
-        },
-        tween(150), label = "piBd"
+            seleccionado -> Color(0xFFFFD700).copy(alpha = 0.4f)
+            else -> Color.White.copy(alpha = 0.06f)
+        }, tween(150), label = "piBd"
     )
 
     Row(
         modifier
             .fillMaxWidth()
+            .scale(scale)
             .onFocusChanged { focused = it.isFocused }
             .focusable()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(14.dp))
             .background(bg)
-            .border(if (focused) 2.dp else 0.dp, border, RoundedCornerShape(12.dp))
+            .border(if (focused) 1.5.dp else 1.dp, border, RoundedCornerShape(14.dp))
             .clickable { onClick() }
-            .padding(10.dp),
+            .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 🆕 FASE 3b: Miniatura (si tiene URL)
-        if (miniaturaUrl != null && miniaturaUrl.isNotBlank()) {
+        // Preferir logo del canal si existe, sino imagen del evento
+        val tieneLogo = logoCanal.isNotBlank()
+        val tieneMiniatura = miniaturaUrl != null && miniaturaUrl.isNotBlank()
+        
+        if (tieneLogo || tieneMiniatura) {
             Box(
                 Modifier
-                    .size(width = 70.dp, height = 42.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color(0xFF1A1A1A)),
+                    .size(width = 76.dp, height = 46.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (tieneLogo) Color(0xFF0F0F15) else Color(0xFF1A1A22))
+                    .border(
+                        if (tieneLogo) 1.dp else 0.dp,
+                        if (tieneLogo) Color.White.copy(alpha = 0.08f) else Color.Transparent,
+                        RoundedCornerShape(8.dp)
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 coil.compose.AsyncImage(
-                    model = miniaturaUrl,
+                    model = if (tieneLogo) logoCanal else miniaturaUrl,
                     contentDescription = null,
-                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
+                    contentScale = if (tieneLogo) 
+                        androidx.compose.ui.layout.ContentScale.Fit 
+                    else 
+                        androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = if (tieneLogo) 
+                        Modifier.size(width = 60.dp, height = 34.dp) 
+                    else 
+                        Modifier.fillMaxSize()
                 )
-                // Overlay con indicador de "en vivo"
+                
+                // Badge de "reproduciendo" si está seleccionado
                 if (seleccionado) {
                     Box(
-                        Modifier
-                            .align(Alignment.TopStart)
-                            .padding(3.dp)
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF4ADE80))
+                        Modifier.fillMaxSize().background(
+                            Brush.verticalGradient(
+                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.7f))
+                            )
+                        )
                     )
+                    Box(
+                        Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(4.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFF4ADE80))
+                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                    ) {
+                        Text("●", color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Black)
+                    }
                 }
             }
             Spacer(Modifier.width(12.dp))
         } else {
-            // Sin miniatura → círculo indicador (diseño viejo)
             Box(
-                Modifier.size(10.dp).clip(CircleShape).background(
+                Modifier.size(8.dp).clip(CircleShape).background(
                     when {
                         seleccionado -> Color(0xFF4ADE80)
                         focused -> Color(0xFFFFD700)
-                        else -> Color(0xFF64748B)
+                        else -> Color.White.copy(alpha = 0.3f)
                     }
                 )
             )
@@ -2119,30 +2249,44 @@ private fun PanelItem(
         Column(Modifier.weight(1f)) {
             Text(
                 titulo,
-                color = Color.White,
+                color = if (seleccionado) Color(0xFFFFD700) else Color.White,
                 fontSize = 14.sp,
                 fontWeight = if (seleccionado || focused) FontWeight.Bold else FontWeight.Medium,
-                maxLines = 2
+                maxLines = 2,
+                letterSpacing = 0.2.sp
             )
-            subtitulo?.let {
+            if (subtitulo != null) {
                 Spacer(Modifier.height(2.dp))
-                Text(it, color = Color(0xFFFFD700), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    subtitulo,
+                    color = if (seleccionado) Color(0xFF4ADE80) else Color.White.copy(alpha = 0.5f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium
+                )
             }
         }
+
         if (focused) {
-            Icon(
-                imageVector = AppIcons.play,
-                contentDescription = null,
-                tint = Color(0xFFFFD700),
-                modifier = Modifier.size(18.dp)
-            )
+            Box(
+                Modifier.size(26.dp).clip(CircleShape)
+                    .background(Color(0xFFFFD700)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = AppIcons.play,
+                    contentDescription = null,
+                    tint = Color.Black,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
         }
     }
 }
 
 // ═══════════════════════════════════════════════════════════
-// 🆕 FASE 1b: Item del selector de calidad (top-level)
+// Selector de calidad item
 // ═══════════════════════════════════════════════════════════
+
 @Composable
 private fun SelectorCalidadItem(
     titulo: String,
@@ -2153,19 +2297,17 @@ private fun SelectorCalidadItem(
     var focused by remember { mutableStateOf(false) }
     val bg by animateColorAsState(
         when {
-            seleccionado -> Color(0x55D4AF37)
-            focused -> Color(0x44FFFFFF)
-            else -> Color(0x22FFFFFF)
-        },
-        tween(150), label = "scBg"
+            seleccionado -> Color(0x33FFD700)
+            focused -> Color.White.copy(alpha = 0.08f)
+            else -> Color.White.copy(alpha = 0.03f)
+        }, tween(150), label = "scBg"
     )
     val border by animateColorAsState(
         when {
-            seleccionado -> Color(0xFFFFD700)
-            focused -> Color(0x88FFFFFF)
-            else -> Color.Transparent
-        },
-        tween(150), label = "scBd"
+            seleccionado -> Color(0xFFFFD700).copy(alpha = 0.6f)
+            focused -> Color.White.copy(alpha = 0.3f)
+            else -> Color.White.copy(alpha = 0.06f)
+        }, tween(150), label = "scBd"
     )
 
     Row(
@@ -2175,15 +2317,14 @@ private fun SelectorCalidadItem(
             .focusable()
             .clip(RoundedCornerShape(12.dp))
             .background(bg)
-            .border(if (seleccionado || focused) 2.dp else 0.dp, border, RoundedCornerShape(12.dp))
+            .border(if (seleccionado || focused) 1.5.dp else 1.dp, border, RoundedCornerShape(12.dp))
             .clickable { onClick() }
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
-            Modifier.size(10.dp).clip(CircleShape).background(
-                if (seleccionado) Color(0xFF4ADE80) else Color(0xFF64748B)
-            )
+            Modifier.size(10.dp).clip(CircleShape)
+                .background(if (seleccionado) Color(0xFF4ADE80) else Color.White.copy(alpha = 0.2f))
         )
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
@@ -2193,11 +2334,7 @@ private fun SelectorCalidadItem(
                 fontSize = 15.sp,
                 fontWeight = if (seleccionado || focused) FontWeight.Bold else FontWeight.Medium
             )
-            Text(
-                subtitulo,
-                color = Color(0xFF94A3B8),
-                fontSize = 12.sp
-            )
+            Text(subtitulo, color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp)
         }
         if (seleccionado) {
             Icon(

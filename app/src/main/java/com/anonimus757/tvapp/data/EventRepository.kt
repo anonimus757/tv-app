@@ -76,7 +76,8 @@ object EventRepository {
                 ev
             }
 
-            DebugLog.log("✅ Firestore eventos OK: ${lista.size}")
+            val conFixture = lista.count { it.fixtureId != null }
+            DebugLog.log("✅ Firestore eventos OK: ${lista.size} (con fixtureId: $conFixture)")
             Log.d(TAG, "✅ Firestore: ${lista.size} eventos ($totalDocs docs)")
             lista
         } catch (e: Exception) {
@@ -102,6 +103,21 @@ object EventRepository {
                 return null
             }
 
+            // Campos API-Sports: primero Firestore, si no → parsear de la descripción
+            var equipoLocal = doc.getString("equipo_local")?.trim() ?: ""
+            var equipoVisitante = doc.getString("equipo_visitante")?.trim() ?: ""
+            if (equipoLocal.isBlank() || equipoVisitante.isBlank()) {
+                val parsed = parsearEquiposDeDescripcion(descripcion)
+                if (equipoLocal.isBlank()) equipoLocal = parsed.first
+                if (equipoVisitante.isBlank()) equipoVisitante = parsed.second
+            }
+            val liga = doc.getString("liga")?.trim()?.takeIf { it.isNotBlank() } ?: categoria
+            val fixtureId = doc.getLong("fixture_id")?.toInt()
+            // Duración automática: 150 minutos (2h 30min) para todos los eventos
+            val duracionMinutos = 150
+            val videoFinalizado = doc.getString("video_finalizado")?.trim() ?: ""
+            val videoProximo = doc.getString("video_proximo")?.trim() ?: ""
+
             // Tolerante: acepta array de maps O un solo map
             val embedsRawAny = doc.get("embeds")
             val embedsList: List<Map<String, Any?>> = when (embedsRawAny) {
@@ -114,7 +130,8 @@ object EventRepository {
                 val nombre = (m["nombre"] as? String)?.takeIf { it.isNotBlank() } ?: "Canal"
                 val url = (m["url"] as? String)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
                 val referer = (m["referer"] as? String) ?: ""
-                Embed(nombre, url.trim(), referer.trim())
+                val logo = (m["logo"] as? String) ?: ""
+                Embed(nombre, url.trim(), referer.trim(), logo.trim())
             }
 
             if (embeds.isEmpty()) return null
@@ -126,7 +143,14 @@ object EventRepository {
                 hora = hora,
                 imagen = imagen,
                 embeds = embeds,
-                fecha = fecha
+                fecha = fecha,
+                equipoLocal = equipoLocal,
+                equipoVisitante = equipoVisitante,
+                liga = liga,
+                fixtureId = fixtureId,
+                duracionMinutos = duracionMinutos,
+                videoFinalizado = videoFinalizado,
+                videoProximo = videoProximo
             )
         } catch (e: Exception) {
             Log.e(TAG, "parsear fail: ${e.message}")
@@ -254,4 +278,19 @@ object EventRepository {
         if (u.startsWith("http")) return u
         return try { URL(URL(base), u).toString() } catch (e: Exception) { null }
     }
+
+    /**
+     * Parsea equipos desde la descripción tipo "AUCAS vs MACARA" o "Boca vs River".
+     * Devuelve Pair(local, visitante). Si no puede parsear, devuelve ("", "").
+     */
+    private fun parsearEquiposDeDescripcion(desc: String): Pair<String, String> {
+        return try {
+            val regex = Regex("""\s+(?:vs\.?|v\.?|-)\s+""", RegexOption.IGNORE_CASE)
+            val partes = desc.split(regex).map { it.trim() }.filter { it.isNotBlank() }
+            if (partes.size >= 2) Pair(partes[0], partes[1]) else Pair("", "")
+        } catch (e: Exception) {
+            Pair("", "")
+        }
+    }
+
 }

@@ -12,3 +12,4 @@ sealed interface Screen {
 }
 
 enum class VolverA { Home, Player }
+

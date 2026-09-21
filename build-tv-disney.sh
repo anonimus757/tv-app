@@ -1,3 +1,14 @@
+#!/bin/bash
+set -e
+
+# ═══════════════════════════════════════════════════════════
+# HOME SCREEN — Disney+ Style
+# ═══════════════════════════════════════════════════════════
+HOME="app/src/main/java/com/anonimus757/tvapp/ui/HomeScreen.kt"
+cp "$HOME" "${HOME}.bak.disney.$(date +%s)"
+echo "✅ Backup Home"
+
+cat > "$HOME" << 'KOTLIN_EOF'
 package com.anonimus757.tvapp.ui
 
 import android.content.res.Configuration
@@ -80,7 +91,7 @@ private fun diaRelativo(ev: Evento): String {
         }
         val hoy = cal.timeInMillis
         cal.time = fechaEv
-        cal.set(Calendar.HOUR_OF_DAY, 0); cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
         cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
         val diff = ((cal.timeInMillis - hoy) / (1000L * 60L * 60L * 24L)).toInt()
         when {
@@ -763,3 +774,586 @@ private fun EmptyState(esMovil: Boolean) {
         }
     }
 }
+KOTLIN_EOF
+
+echo "✅ HomeScreen.kt reescrito Disney+"
+
+# ═══════════════════════════════════════════════════════════
+# EVENT DETAIL — Disney+ Grid
+# ═══════════════════════════════════════════════════════════
+DETAIL="app/src/main/java/com/anonimus757/tvapp/ui/EventDetailScreen.kt"
+cp "$DETAIL" "${DETAIL}.bak.disney.$(date +%s)"
+echo "✅ Backup Detail"
+
+cat > "$DETAIL" << 'KOTLIN_EOF'
+package com.anonimus757.tvapp.ui
+
+import android.content.res.Configuration
+import android.view.ViewGroup
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
+import coil.compose.AsyncImage
+import com.anonimus757.tvapp.data.Embed
+import com.anonimus757.tvapp.data.Evento
+import com.anonimus757.tvapp.ui.animations.fadeInOnLoad
+import com.anonimus757.tvapp.ui.theme.AppIcons
+import com.anonimus757.tvapp.ui.util.rememberEsTV
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
+
+// ═══════════════════════════════════════════════════════════
+// ESTADO
+// ═══════════════════════════════════════════════════════════
+
+enum class EstadoEvento { PROXIMO, EN_VIVO, FINALIZADO }
+
+private fun calcularEstado(ev: Evento): EstadoEvento {
+    return try {
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val fechaEv = sdf.parse(ev.fecha) ?: return EstadoEvento.PROXIMO
+        val cal = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        }
+        val hoy = cal.timeInMillis
+        cal.time = fechaEv
+        cal.set(Calendar.HOUR_OF_DAY, 0); cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
+        val diff = ((cal.timeInMillis - hoy) / (1000L * 60L * 60L * 24L)).toInt()
+        if (diff > 0) return EstadoEvento.PROXIMO
+        if (diff < 0) return EstadoEvento.FINALIZADO
+        val ahora = Calendar.getInstance()
+        val minAct = ahora.get(Calendar.HOUR_OF_DAY) * 60 + ahora.get(Calendar.MINUTE)
+        val m = Regex("""(\d{1,2}):(\d{2})""").find(ev.hora)
+        val minEv = m?.let { (it.groupValues[1].toIntOrNull() ?: 0) * 60 + (it.groupValues[2].toIntOrNull() ?: 0) } ?: 0
+        when {
+            minAct < minEv -> EstadoEvento.PROXIMO
+            minAct < minEv + ev.duracionMinutos -> EstadoEvento.EN_VIVO
+            else -> EstadoEvento.FINALIZADO
+        }
+    } catch (e: Exception) { EstadoEvento.PROXIMO }
+}
+
+private fun minutosHasta(ev: Evento): Int? {
+    return try {
+        val ahora = Calendar.getInstance()
+        val minAct = ahora.get(Calendar.HOUR_OF_DAY) * 60 + ahora.get(Calendar.MINUTE)
+        val m = Regex("""(\d{1,2}):(\d{2})""").find(ev.hora) ?: return null
+        val minEv = (m.groupValues[1].toIntOrNull() ?: 0) * 60 + (m.groupValues[2].toIntOrNull() ?: 0)
+        if (minEv > minAct) minEv - minAct else null
+    } catch (e: Exception) { null }
+}
+
+// ═══════════════════════════════════════════════════════════
+// VIDEO EN BUCLE
+// ═══════════════════════════════════════════════════════════
+
+@Composable
+private fun VideoLoopPlayer(url: String, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val exoPlayer = remember(url) {
+        ExoPlayer.Builder(context).build().apply {
+            setMediaItem(MediaItem.fromUri(url))
+            repeatMode = Player.REPEAT_MODE_ALL
+            volume = 0f
+            playWhenReady = true
+            prepare()
+        }
+    }
+    DisposableEffect(url) { onDispose { exoPlayer.release() } }
+    AndroidView(
+        factory = { ctx ->
+            PlayerView(ctx).apply {
+                player = exoPlayer
+                useController = false
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            }
+        },
+        modifier = modifier
+    )
+}
+
+// ═══════════════════════════════════════════════════════════
+// PANTALLA
+// ═══════════════════════════════════════════════════════════
+
+@Composable
+fun EventDetailScreen(
+    evento: Evento,
+    onCanalClick: (Embed) -> Unit,
+    onBack: () -> Unit
+) {
+    BackHandler { onBack() }
+
+    val esTV = rememberEsTV()
+    val configuration = LocalConfiguration.current
+    val esVertical = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+    val esMovil = !esTV && esVertical
+    val estado = remember(evento) { calcularEstado(evento) }
+    val padH = if (esTV) 44.dp else if (esMovil) 16.dp else 32.dp
+
+    Box(Modifier.fillMaxSize().background(Color(0xFF0A0A0F))) {
+        Column(Modifier.fillMaxSize()) {
+            // Top bar con botón volver
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = padH, vertical = if (esTV) 18.dp else 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                BotonVolverCompact(onBack, esTV)
+            }
+
+            // Hero con imagen del evento (más chico, Disney+ style)
+            HeroEvento(evento, esTV, esMovil, estado, minutosHasta(evento))
+
+            Spacer(Modifier.height(if (esTV) 24.dp else 16.dp))
+
+            // Contenido según estado
+            when (estado) {
+                EstadoEvento.EN_VIVO -> {
+                    SeccionCanales(evento, esTV, esMovil, esVertical, onCanalClick)
+                }
+                EstadoEvento.FINALIZADO -> {
+                    SeccionVideoEstado(evento, esTV, esMovil, esFinalizado = true)
+                }
+                EstadoEvento.PROXIMO -> {
+                    SeccionVideoEstado(evento, esTV, esMovil, esFinalizado = false)
+                }
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+// BOTÓN VOLVER (compact)
+// ═══════════════════════════════════════════════════════════
+
+@Composable
+private fun BotonVolverCompact(onClick: () -> Unit, esTV: Boolean) {
+    var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (focused) 1.05f else 1f, tween(150), label = "vbScale")
+
+    Row(
+        Modifier
+            .scale(scale)
+            .onFocusChanged { focused = it.isFocused }
+            .focusable()
+            .clickable { onClick() }
+            .clip(CircleShape)
+            .background(if (focused) Color.White.copy(alpha = 0.2f) else Color.Transparent)
+            .padding(horizontal = if (esTV) 14.dp else 10.dp, vertical = if (esTV) 8.dp else 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = AppIcons.volver,
+            contentDescription = "Volver",
+            tint = Color.White,
+            modifier = Modifier.size(if (esTV) 22.dp else 18.dp)
+        )
+        Spacer(Modifier.width(if (esTV) 8.dp else 6.dp))
+        Text(
+            "Volver",
+            color = Color.White,
+            fontSize = if (esTV) 15.sp else 13.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+// HERO (más chico, horizontal, Disney+ style)
+// ═══════════════════════════════════════════════════════════
+
+@Composable
+private fun HeroEvento(
+    evento: Evento, esTV: Boolean, esMovil: Boolean,
+    estado: EstadoEvento, minsHasta: Int?
+) {
+    val padH = if (esTV) 44.dp else if (esMovil) 16.dp else 32.dp
+    val altura = if (esTV) 260.dp else if (esMovil) 160.dp else 200.dp
+    val tituloSize = if (esTV) 36.sp else if (esMovil) 22.sp else 28.sp
+
+    Box(Modifier.fillMaxWidth().height(altura)) {
+        if (evento.imagen.isNotBlank()) {
+            AsyncImage(
+                model = evento.imagen, contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().alpha(0.5f)
+            )
+        }
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.horizontalGradient(
+                    listOf(
+                        Color(0xFF0A0A0F),
+                        Color(0xFF0A0A0F).copy(alpha = 0.85f),
+                        Color(0xFF0A0A0F).copy(alpha = 0.4f),
+                        Color.Transparent
+                    )
+                )
+            )
+        )
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.verticalGradient(listOf(Color.Transparent, Color(0xFF0A0A0F)))
+            )
+        )
+
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = padH).padding(bottom = if (esTV) 24.dp else 16.dp),
+            verticalArrangement = Arrangement.Bottom
+        ) {
+            // Badges
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                when (estado) {
+                    EstadoEvento.EN_VIVO -> BadgeEstado("● EN VIVO", Color(0xFFFF3B30), Color.White, esTV)
+                    EstadoEvento.FINALIZADO -> BadgeEstado("✓ FINALIZADO", Color.White.copy(alpha = 0.15f), Color.White, esTV)
+                    EstadoEvento.PROXIMO -> {
+                        if (minsHasta != null && minsHasta <= 60) {
+                            BadgeEstado("⏰ EN ${minsHasta}MIN", Color(0xFFFFA500), Color.Black, esTV)
+                        } else {
+                            BadgeEstado("🕐 PRÓXIMO", Color(0xFFFFD700), Color.Black, esTV)
+                        }
+                    }
+                }
+                BadgeEstado(evento.groupTitle, Color.White.copy(alpha = 0.15f), Color.White, esTV)
+            }
+            Spacer(Modifier.height(if (esTV) 14.dp else 10.dp))
+            Text(
+                evento.descripcion,
+                color = Color.White,
+                fontSize = tituloSize,
+                fontWeight = FontWeight.Black,
+                lineHeight = (tituloSize.value * 1.05f).sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                letterSpacing = (-0.4).sp
+            )
+            Spacer(Modifier.height(if (esTV) 10.dp else 6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("🕐 ${evento.hora}",
+                    color = Color.White.copy(alpha = 0.85f),
+                    fontSize = if (esTV) 14.sp else 12.sp, fontWeight = FontWeight.Medium)
+                Text("  ·  ", color = Color.White.copy(alpha = 0.4f), fontSize = if (esTV) 14.sp else 12.sp)
+                Text("📅 ${evento.fecha}",
+                    color = Color.White.copy(alpha = 0.85f),
+                    fontSize = if (esTV) 14.sp else 12.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun BadgeEstado(texto: String, bg: Color, fg: Color, esTV: Boolean) {
+    Box(
+        Modifier.clip(RoundedCornerShape(6.dp)).background(bg)
+            .padding(horizontal = if (esTV) 12.dp else 9.dp, vertical = if (esTV) 5.dp else 4.dp)
+    ) {
+        Text(texto, color = fg,
+            fontSize = if (esTV) 12.sp else 10.sp,
+            fontWeight = FontWeight.Black,
+            letterSpacing = 0.8.sp,
+            maxLines = 1)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+// SECCIÓN CANALES (GRID Disney+ style)
+// ═══════════════════════════════════════════════════════════
+
+@Composable
+private fun SeccionCanales(
+    evento: Evento, esTV: Boolean, esMovil: Boolean, esVertical: Boolean,
+    onCanalClick: (Embed) -> Unit
+) {
+    val padH = if (esTV) 44.dp else if (esMovil) 16.dp else 32.dp
+    val columnas = when {
+        esTV -> 4
+        esMovil -> 1
+        esVertical -> 2
+        else -> 3
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        // Header
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = padH, vertical = if (esTV) 10.dp else 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("📺", fontSize = if (esTV) 20.sp else 16.sp)
+            Spacer(Modifier.width(if (esTV) 10.dp else 6.dp))
+            Text(
+                "Elegí un canal",
+                color = Color.White,
+                fontSize = if (esTV) 22.sp else 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.width(10.dp))
+            Box(
+                Modifier.clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFFFFD700).copy(alpha = 0.2f))
+                    .padding(horizontal = 8.dp, vertical = 2.dp)
+            ) {
+                Text("${evento.embeds.size}",
+                    color = Color(0xFFFFD700),
+                    fontSize = if (esTV) 12.sp else 10.sp,
+                    fontWeight = FontWeight.Black)
+            }
+        }
+        Spacer(Modifier.height(if (esTV) 14.dp else 8.dp))
+
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(columnas),
+            contentPadding = PaddingValues(horizontal = padH, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (esTV) 16.dp else 10.dp),
+            verticalArrangement = Arrangement.spacedBy(if (esTV) 16.dp else 10.dp),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            itemsIndexed(
+                items = evento.embeds,
+                key = { idx, it -> "ch_${idx}_${it.url}" }
+            ) { index, embed ->
+                Box(Modifier.fadeInOnLoad(350, delayMs = index * 40)) {
+                    CanalCardDisney(embed, index + 1, evento.imagen, esTV, esMovil) { onCanalClick(embed) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CanalCardDisney(
+    embed: Embed, indice: Int, imagenEvento: String,
+    esTV: Boolean, esMovil: Boolean,
+    onClick: () -> Unit
+) {
+    var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (focused) 1.06f else 1f, tween(200), label = "chScale")
+    val borderColor by animateColorAsState(
+        if (focused) Color.White else Color.Transparent,
+        tween(150), label = "chBorder"
+    )
+    val altura = if (esTV) 180.dp else if (esMovil) 130.dp else 160.dp
+
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(altura)
+            .scale(scale)
+            .onFocusChanged { focused = it.isFocused }
+            .focusable()
+            .clickable { onClick() }
+            .clip(RoundedCornerShape(if (esTV) 14.dp else 10.dp))
+            .background(Color(0xFF1A1A22))
+            .border(if (focused) 3.dp else 0.dp, borderColor, RoundedCornerShape(if (esTV) 14.dp else 10.dp))
+    ) {
+        // Imagen de fondo
+        if (imagenEvento.isNotBlank()) {
+            AsyncImage(
+                model = imagenEvento, contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().alpha(0.4f)
+            )
+        }
+        // Gradiente
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.verticalGradient(
+                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f))
+                )
+            )
+        )
+
+        // Número del canal arriba
+        Box(
+            Modifier.align(Alignment.TopStart).padding(if (esTV) 10.dp else 8.dp)
+                .size(if (esTV) 32.dp else 26.dp)
+                .clip(CircleShape)
+                .background(if (focused) Color.White else Color(0xFFFFD700)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("$indice", color = Color.Black,
+                fontSize = if (esTV) 15.sp else 12.sp,
+                fontWeight = FontWeight.Black)
+        }
+
+        // Play icon flotante arriba derecha (solo cuando focused)
+        if (focused) {
+            Box(
+                Modifier.align(Alignment.TopEnd).padding(if (esTV) 10.dp else 8.dp)
+                    .size(if (esTV) 32.dp else 26.dp)
+                    .clip(CircleShape)
+                    .background(Color.White),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("▶", color = Color.Black,
+                    fontSize = if (esTV) 14.sp else 11.sp,
+                    fontWeight = FontWeight.Black)
+            }
+        }
+
+        // Nombre abajo
+        Column(
+            Modifier.fillMaxSize().padding(if (esTV) 12.dp else 8.dp),
+            verticalArrangement = Arrangement.Bottom
+        ) {
+            Text(
+                embed.nombre,
+                color = Color.White,
+                fontSize = if (esTV) 15.sp else 12.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                lineHeight = if (esTV) 18.sp else 14.sp,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+// SECCIÓN PRÓXIMO / FINALIZADO
+// ═══════════════════════════════════════════════════════════
+
+@Composable
+private fun SeccionVideoEstado(
+    evento: Evento, esTV: Boolean, esMovil: Boolean, esFinalizado: Boolean
+) {
+    val padH = if (esTV) 44.dp else if (esMovil) 16.dp else 32.dp
+    val altura = if (esTV) 380.dp else if (esMovil) 220.dp else 300.dp
+    val video = if (esFinalizado) evento.videoFinalizado else evento.videoProximo
+
+    Box(
+        Modifier.fillMaxSize().padding(horizontal = padH),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Box(
+            Modifier.fillMaxWidth().height(altura)
+                .clip(RoundedCornerShape(20.dp))
+                .background(Color(0xFF1A1A22))
+        ) {
+            if (video.isNotBlank()) {
+                VideoLoopPlayer(video, Modifier.fillMaxSize())
+                Box(
+                    Modifier.fillMaxSize().background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color.Transparent,
+                                Color.Transparent,
+                                Color.Black.copy(alpha = 0.85f)
+                            )
+                        )
+                    )
+                )
+                Column(
+                    Modifier.fillMaxSize().padding(if (esTV) 32.dp else 20.dp),
+                    verticalArrangement = Arrangement.Bottom
+                ) {
+                    IconEstado(esFinalizado, esTV)
+                    Spacer(Modifier.height(if (esTV) 16.dp else 10.dp))
+                    Text(
+                        if (esFinalizado) "Evento finalizado" else "El evento está por comenzar",
+                        color = Color.White,
+                        fontSize = if (esTV) 26.sp else 18.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = (-0.3).sp
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        if (esFinalizado) "Gracias por ver FutTV"
+                        else "Los canales aparecerán cuando empiece",
+                        color = Color.White.copy(alpha = 0.75f),
+                        fontSize = if (esTV) 15.sp else 12.sp
+                    )
+                }
+            } else {
+                Column(
+                    Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    IconEstado(esFinalizado, esTV)
+                    Spacer(Modifier.height(if (esTV) 20.dp else 14.dp))
+                    Text(
+                        if (esFinalizado) "Evento finalizado" else "El evento está por comenzar",
+                        color = Color.White,
+                        fontSize = if (esTV) 24.sp else 18.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        if (esFinalizado) "Gracias por ver FutTV"
+                        else "Volvé cuando empiece",
+                        color = Color.White.copy(alpha = 0.5f),
+                        fontSize = if (esTV) 14.sp else 12.sp
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun IconEstado(esFinalizado: Boolean, esTV: Boolean) {
+    Box(
+        Modifier.size(if (esTV) 64.dp else 48.dp)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = 0.1f))
+            .border(1.5.dp, Color(0xFFFFD700).copy(alpha = 0.4f), CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            if (esFinalizado) "✓" else "⏰",
+            fontSize = if (esTV) 28.sp else 22.sp,
+            color = Color(0xFFFFD700),
+            fontWeight = FontWeight.Black
+        )
+    }
+}
+KOTLIN_EOF
+
+echo "✅ EventDetailScreen.kt reescrito Disney+"
+echo ""
+echo "✅✅✅ Disney+ Home + Detail completos"
+echo ""
+echo "Compilá:"
+echo "  ./gradlew clean"
+echo "  ./gradlew assembleDebug --no-daemon --max-workers=1"

@@ -32,7 +32,9 @@ data class AppConfig(
     val urlDescarga: String = "",                // Link de descarga del APK
     val notasVersion: String = "",               // Notas de la versión
     // 🆕 Soporte
-    val telegramUrl: String = "https://t.me/futtvsoporte"
+    val telegramUrl: String = "https://t.me/futtvsoporte",
+    // 🆕 API-Sports (Firestore: config/app → apiSportsKey)
+    val apiSportsKey: String = ""
 )
 
 data class AgendaExterna(
@@ -73,6 +75,13 @@ object RemoteConfigRepository {
                         val cfg = parsearConfig(snapshot.data ?: emptyMap())
                         _config.value = cfg
                         guardarCacheLocal(context, cfg)
+                        // 🆕 Propagar API key al repositorio de API-Sports
+                        try {
+                            ApiSportsRepository.setApiKey(cfg.apiSportsKey)
+                            Log.d(TAG, "🔑 apiSportsKey propagada (${if (cfg.apiSportsKey.isBlank()) "VACÍA" else "OK"})")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "⚠️ setApiKey fail: ${e.message}")
+                        }
                         Log.d(TAG, "✅ Config actualizada desde Firestore")
                     } else {
                         Log.d(TAG, "ℹ️ No existe config/app todavía (usando default)")
@@ -107,7 +116,8 @@ object RemoteConfigRepository {
             versionMinima = data["versionMinima"] as? String ?: "1.0",
             urlDescarga = data["urlDescarga"] as? String ?: "",
             notasVersion = data["notasVersion"] as? String ?: "",
-            telegramUrl = data["telegramUrl"] as? String ?: "https://t.me/futtvsoporte"
+            telegramUrl = data["telegramUrl"] as? String ?: "https://t.me/futtvsoporte",
+            apiSportsKey = data["apiSportsKey"] as? String ?: ""
         )
     }
 

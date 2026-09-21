@@ -1,3 +1,85 @@
+#!/bin/bash
+set -e
+
+echo "🔧 Aplicando mejoras de TV..."
+
+# ═══════════════════════════════════════════════════════════
+# 1. MODELS.KT: agregar campo logo a Embed
+# ═══════════════════════════════════════════════════════════
+MODELS="app/src/main/java/com/anonimus757/tvapp/data/Models.kt"
+cp "$MODELS" "${MODELS}.bak.logos.$(date +%s)"
+
+python3 << 'PYEOF'
+fp = "app/src/main/java/com/anonimus757/tvapp/data/Models.kt"
+with open(fp, 'r', encoding='utf-8') as f:
+    c = f.read()
+
+# Actualizar data class Embed
+viejo = '''data class Embed(
+    val nombre: String,
+    val url: String,
+    val referer: String
+)'''
+
+nuevo = '''data class Embed(
+    val nombre: String,
+    val url: String,
+    val referer: String,
+    val logo: String = ""  // URL del logo del canal (opcional)
+)'''
+
+if viejo in c:
+    c = c.replace(viejo, nuevo, 1)
+    with open(fp, 'w', encoding='utf-8') as f:
+        f.write(c)
+    print("✅ Embed extendido con campo 'logo'")
+else:
+    print("⚠️ No matcheó Embed (puede que ya esté actualizado)")
+PYEOF
+
+# ═══════════════════════════════════════════════════════════
+# 2. EVENTREPOSITORY.KT: parsear logo
+# ═══════════════════════════════════════════════════════════
+REPO="app/src/main/java/com/anonimus757/tvapp/data/EventRepository.kt"
+cp "$REPO" "${REPO}.bak.logos.$(date +%s)"
+
+python3 << 'PYEOF'
+fp = "app/src/main/java/com/anonimus757/tvapp/data/EventRepository.kt"
+with open(fp, 'r', encoding='utf-8') as f:
+    c = f.read()
+
+viejo = '''            val embeds = embedsList.mapNotNull { m ->
+                val nombre = (m["nombre"] as? String)?.takeIf { it.isNotBlank() } ?: "Canal"
+                val url = (m["url"] as? String)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val referer = (m["referer"] as? String) ?: ""
+                Embed(nombre, url.trim(), referer.trim())
+            }'''
+
+nuevo = '''            val embeds = embedsList.mapNotNull { m ->
+                val nombre = (m["nombre"] as? String)?.takeIf { it.isNotBlank() } ?: "Canal"
+                val url = (m["url"] as? String)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val referer = (m["referer"] as? String) ?: ""
+                val logo = (m["logo"] as? String) ?: ""
+                Embed(nombre, url.trim(), referer.trim(), logo.trim())
+            }'''
+
+if viejo in c:
+    c = c.replace(viejo, nuevo, 1)
+    print("✅ EventRepository parsea logo")
+else:
+    print("⚠️ No matcheó el bloque de embeds en EventRepository")
+
+with open(fp, 'w', encoding='utf-8') as f:
+    f.write(c)
+PYEOF
+
+# ═══════════════════════════════════════════════════════════
+# 3. EVENTDETAILSCREEN.KT: rediseño completo
+# ═══════════════════════════════════════════════════════════
+DETAIL="app/src/main/java/com/anonimus757/tvapp/ui/EventDetailScreen.kt"
+cp "$DETAIL" "${DETAIL}.bak.tvmejoras.$(date +%s)"
+
+cat > "$DETAIL" << 'KOTLIN_EOF'
 package com.anonimus757.tvapp.ui
 
 import android.content.res.Configuration
@@ -679,3 +761,28 @@ private fun IconEstado(esFinalizado: Boolean, esTV: Boolean) {
         )
     }
 }
+KOTLIN_EOF
+
+echo "✅ EventDetailScreen reescrito"
+
+echo ""
+echo "═══════════════════════════════════════════════════════"
+echo "✅✅✅ Mejoras TV aplicadas"
+echo "═══════════════════════════════════════════════════════"
+echo ""
+echo "📋 IMPORTANTE — Actualizá tu Sheet:"
+echo ""
+echo "  Agregá UNA COLUMNA EXTRA por cada canal para el LOGO."
+echo "  Estructura nueva: nombre, url, referer, logo"
+echo ""
+echo "  Ejemplo (canal 1):"
+echo "    G=nombre  H=url  I=referer  J=logo"
+echo "  Ejemplo (canal 2):"
+echo "    K=nombre  L=url  M=referer  N=logo"
+echo "  Y así sucesivamente..."
+echo ""
+echo "  Después actualizá el Apps Script (te lo paso aparte)"
+echo ""
+echo "Compilá:"
+echo "  ./gradlew clean"
+echo "  ./gradlew assembleDebug --no-daemon --max-workers=1"
